@@ -5,6 +5,7 @@ matplotlib.use('agg')
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 
 class nnUNetLogger(object):
@@ -52,6 +53,18 @@ class nnUNetLogger(object):
                 if len(self.my_fantastic_logging['ema_fg_dice']) > 0 else value
             self.log('ema_fg_dice', new_ema_pseudo_dice, epoch)
 
+    
+    def save_to_csv(self, output_csv_name):
+        df = {}
+        for key, val in self.my_fantastic_logging.items():
+            if isinstance(val[0], np.ndarray) or isinstance(val[0], list): #may be in case of multiple losses, or simply for dice in multi-class settings 
+                for index, one_val in enumerate(zip(*self.my_fantastic_logging[key])):
+                    df[key+f"_{index}"] = one_val
+            else:
+                def[key] = one_val
+        pd.DataFrame(df).to_csv(output_csv_name)
+        
+        
     def plot_progress_png(self, output_folder):
         blueshades = ["#1E90FF", "#00BFFF", "#87CEEB", "#4169E1", "#4682B4", "#6495ED"]
         redshades = ["#DC143C", "#B22222", "#FF6347", "#FF4500", "#A52A2A", "#CD5C5C" ]

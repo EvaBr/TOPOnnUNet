@@ -954,6 +954,9 @@ class nnUNetTrainer(object):
         self.save_checkpoint(join(self.output_folder, "checkpoint_final.pth"))
         self.current_epoch += 1
 
+        # save the logg in analysis-appropriate format (csv)
+        self.logger.save_to_csv(self.log_file[:-3]+"csv")
+        
         # now we can delete latest
         if self.local_rank == 0 and isfile(join(self.output_folder, "checkpoint_latest.pth")):
             os.remove(join(self.output_folder, "checkpoint_latest.pth"))
