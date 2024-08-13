@@ -69,7 +69,6 @@ from nnunetv2.utilities.label_handling.label_handling import convert_labelmap_to
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
 
 
-
 class nnUNetTrainer(object):
     def __init__(self, plans: dict, configuration: str, fold: int, dataset_json: dict, unpack_dataset: bool = True,
                  device: torch.device = torch.device('cuda')):
@@ -86,7 +85,9 @@ class nnUNetTrainer(object):
         # one day code base understandable and grug can get work done, everything good!
         # next day impossible: complexity demon spirit has entered code and very dangerous situation!
 
-        # OK OK I am guilty. But I tried. http://tiny.cc/gzgwuz
+        # OK OK I am guilty. But I tried.
+        # https://www.osnews.com/images/comics/wtfm.jpg
+        # https://i.pinimg.com/originals/26/b2/50/26b250a738ea4abc7a5af4d42ad93af0.jpg
 
         self.is_ddp = dist.is_available() and dist.is_initialized()
         self.local_rank = 0 if not self.is_ddp else dist.get_rank()
@@ -158,7 +159,7 @@ class nnUNetTrainer(object):
         # needed for predictions. We do sigmoid in case of (overlapping) regions
 
         self.num_input_channels = None  # -> self.initialize()
-        self.network = None  # -> self.build_network_architecture() vcasih blo pa self._get_network()
+        self.network = None  # -> self.build_network_architecture()
         self.optimizer = self.lr_scheduler = None  # -> self.initialize
         self.grad_scaler = GradScaler() if self.device.type == 'cuda' else None
         self.loss = None  # -> self.initialize
@@ -206,10 +207,6 @@ class nnUNetTrainer(object):
             self.num_input_channels = determine_num_input_channels(self.plans_manager, self.configuration_manager,
                                                                    self.dataset_json)
 
-            #self.network = self.build_network_architecture(self.plans_manager, self.dataset_json,
-            #                                               self.configuration_manager,
-            #                                               self.num_input_channels,
-            #                                               enable_deep_supervision=True).to(self.device)
             self.network = self.build_network_architecture(
                 self.configuration_manager.network_arch_class_name,
                 self.configuration_manager.network_arch_init_kwargs,
@@ -220,7 +217,7 @@ class nnUNetTrainer(object):
             ).to(self.device)
             # compile network for free speedup
             if self._do_i_compile():
-                self.print_to_log_file('Compiling network, using torch.compile...')
+                self.print_to_log_file('Using torch.compile...')
                 self.network = torch.compile(self.network)
 
             self.optimizer, self.lr_scheduler = self.configure_optimizers()
@@ -230,13 +227,14 @@ class nnUNetTrainer(object):
                 self.network = DDP(self.network, device_ids=[self.local_rank])
 
             self.loss = self._build_loss()
+            # torch 2.2.2 crashes upon compiling CE loss
+            # if self._do_i_compile():
+            #     self.loss = torch.compile(self.loss)
             self.was_initialized = True
         else:
             raise RuntimeError("You have called self.initialize even though the trainer was already initialized. "
                                "That should not happen.")
 
-    #def _do_i_compile(self):
-    #    return ('nnUNet_compile' in os.environ.keys()) and (os.environ['nnUNet_compile'].lower() in ('true', '1', 't'))
     def _do_i_compile(self):
         # new default: compile is enabled!
 
@@ -265,8 +263,6 @@ class nnUNetTrainer(object):
         else:
             return os.environ['nnUNet_compile'].lower() in ('true', '1', 't')
 
-
-    
     def _save_debug_information(self):
         # saving some debug information
         if self.local_rank == 0:
@@ -309,13 +305,8 @@ class nnUNetTrainer(object):
                                    num_input_channels: int,
                                    num_output_channels: int,
                                    enable_deep_supervision: bool = True) -> nn.Module:
-                                   #plans_manager: PlansManager,
-                                   #dataset_json,
-                                   #configuration_manager: ConfigurationManager,
-                                   #num_input_channels,
-                                   #enable_deep_supervision: bool = True) -> nn.Module:
         """
-        his is where you build the architecture according to the plans. There is no obligation to use
+        This is where you build the architecture according to the plans. There is no obligation to use
         get_network_from_plans, this is just a utility we use for the nnU-Net default architectures. You can do what
         you want. Even ignore the plans and just return something static (as long as it can process the requested
         patch size)
@@ -333,15 +324,14 @@ class nnUNetTrainer(object):
         should be generated. label_manager takes care of all that for you.)
 
         """
-        return get_network_from_plans(architecture_class_name,
+        return get_network_from_plans(
+            architecture_class_name,
             arch_init_kwargs,
             arch_init_kwargs_req_import,
             num_input_channels,
             num_output_channels,
             allow_init=True,
             deep_supervision=enable_deep_supervision)
-            #plans_manager, dataset_json, configuration_manager,
-            #                          num_input_channels, deep_supervision=enable_deep_supervision)
 
     def _get_deep_supervision_scales(self):
         if self.enable_deep_supervision:
@@ -357,7 +347,7 @@ class nnUNetTrainer(object):
             self.batch_size = self.configuration_manager.batch_size
         else:
             # batch size is distributed over DDP workers and we need to change oversample_percent for each worker
-            
+
             world_size = dist.get_world_size()
             my_rank = dist.get_rank()
 
@@ -411,10 +401,11 @@ class nnUNetTrainer(object):
         if self._do_i_compile():
             loss.dc = torch.compile(loss.dc)
 
+        # we give each output a weight which decreases exponentially (division by 2) as the resolution decreases
+        # this gives higher resolution outputs more weight in the loss
+
         if self.enable_deep_supervision:
             deep_supervision_scales = self._get_deep_supervision_scales()
-            # we give each output a weight which decreases exponentially (division by 2) as the resolution decreases
-            # this gives higher resolution outputs more weight in the loss
             weights = np.array([1 / (2 ** i) for i in range(len(deep_supervision_scales))])
             if self.is_ddp and not self._do_i_compile():
                 # very strange and stupid interaction. DDP crashes and complains about unused parameters due to
@@ -428,7 +419,7 @@ class nnUNetTrainer(object):
             weights = weights / weights.sum()
             # now wrap the loss
             loss = DeepSupervisionWrapper(loss, weights)
-        
+
         return loss
 
     def configure_rotation_dummyDA_mirroring_and_inital_patch_size(self):
@@ -480,7 +471,7 @@ class nnUNetTrainer(object):
             dt_object = datetime.fromtimestamp(timestamp)
 
             if add_timestamp:
-                args = ("%s:" % dt_object, *args)
+                args = (f"{dt_object}:", *args)
 
             successful = False
             max_attempts = 5
@@ -494,7 +485,7 @@ class nnUNetTrainer(object):
                         f.write("\n")
                     successful = True
                 except IOError:
-                    print("%s: failed to log: " % datetime.fromtimestamp(timestamp), sys.exc_info())
+                    print(f"{datetime.fromtimestamp(timestamp)}: failed to log: ", sys.exc_info())
                     sleep(0.5)
                     ctr += 1
             if also_print_to_console:
@@ -558,9 +549,9 @@ class nnUNetTrainer(object):
     def do_split(self):
         """
         The default split is a 5 fold CV on all available training cases. nnU-Net will create a split (it is seeded,
-        so always the same) and save it as splits_final.pkl file in the preprocessed data directory.
+        so always the same) and save it as splits_final.json file in the preprocessed data directory.
         Sometimes you may want to create your own split for various reasons. For this you will need to create your own
-        splits_final.pkl file. If this file is present, nnU-Net is going to use it and whatever splits are defined in
+        splits_final.json file. If this file is present, nnU-Net is going to use it and whatever splits are defined in
         it. You can create as many splits in this file as you want. Note that if you define only 4 splits (fold 0-3)
         and then set fold=4 when training (that would be the fifth split), nnU-Net will print a warning and proceed to
         use a random 80:20 data split.
@@ -594,7 +585,6 @@ class nnUNetTrainer(object):
                 val_keys = splits[self.fold]['val']
                 self.print_to_log_file("This split has %d training and %d validation cases."
                                        % (len(tr_keys), len(val_keys)))
-
             else:
                 self.print_to_log_file("INFO: You requested fold %d for training but splits "
                                        "contain only %d folds. I am now creating a "
@@ -628,17 +618,20 @@ class nnUNetTrainer(object):
         return dataset_tr, dataset_val
 
     def get_dataloaders(self):
-        # we use the patch size to determine whether we need 2D or 3D dataloaders. We also use it to determine whether
-        # we need to use dummy 2D augmentation (in case of 3D training) and what our initial patch size should be
         patch_size = self.configuration_manager.patch_size
         dim = len(patch_size)
 
         # needed for deep supervision: how much do we need to downscale the segmentation targets for the different
         # outputs?
+
         deep_supervision_scales = self._get_deep_supervision_scales()
 
-        rotation_for_DA, do_dummy_2d_data_aug, initial_patch_size, mirror_axes = \
-            self.configure_rotation_dummyDA_mirroring_and_inital_patch_size()
+        (
+            rotation_for_DA,
+            do_dummy_2d_data_aug,
+            initial_patch_size,
+            mirror_axes,
+        ) = self.configure_rotation_dummyDA_mirroring_and_inital_patch_size()
 
         # training pipeline
         tr_transforms = self.get_training_transforms(
@@ -657,6 +650,7 @@ class nnUNetTrainer(object):
                                                         ignore_label=self.label_manager.ignore_label)
 
         dataset_tr, dataset_val = self.get_tr_and_val_datasets()
+
         if dim == 2:
             dl_tr = nnUNetDataLoader2D(dataset_tr, self.batch_size,
                                        initial_patch_size,
@@ -702,7 +696,6 @@ class nnUNetTrainer(object):
         _ = next(mt_gen_train)
         _ = next(mt_gen_val)
         return mt_gen_train, mt_gen_val
-
 
     @staticmethod
     def get_training_transforms(
@@ -854,7 +847,6 @@ class nnUNetTrainer(object):
             transforms.append(DownsampleSegForDSTransform(ds_scales=deep_supervision_scales))
 
         return ComposeTransforms(transforms)
-     
 
     @staticmethod
     def get_validation_transforms(
@@ -972,7 +964,6 @@ class nnUNetTrainer(object):
 
         empty_cache(self.device)
         self.print_to_log_file("Training done.")
-        
 
     def on_train_epoch_start(self):
         self.network.train()
@@ -995,17 +986,14 @@ class nnUNetTrainer(object):
             target = target.to(self.device, non_blocking=True)
 
         self.optimizer.zero_grad(set_to_none=True)
-        # Autocast is a little bitch.
+        # Autocast can be annoying
         # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
         # So autocast will only be active if we have a cuda device.
         with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
             output = self.network(data)
             # del data
-            # EVA #
-            losstensor = self.loss(output, target)
-            l = losstensor.sum() #should work even if losstensor = tensor size 1 
-            #######
+            l = self.loss(output, target)
 
         if self.grad_scaler is not None:
             self.grad_scaler.scale(l).backward()
@@ -1017,11 +1005,7 @@ class nnUNetTrainer(object):
             l.backward()
             torch.nn.utils.clip_grad_norm_(self.network.parameters(), 12)
             self.optimizer.step()
-            
-        #return {'loss': l.detach().cpu().numpy()}
-        # EVA #
-        return {'loss': losstensor.detach().cpu().numpy() }
-        #######
+        return {'loss': l.detach().cpu().numpy()}
 
     def on_train_epoch_end(self, train_outputs: List[dict]):
         outputs = collate_outputs(train_outputs)
@@ -1029,9 +1013,9 @@ class nnUNetTrainer(object):
         if self.is_ddp:
             losses_tr = [None for _ in range(dist.get_world_size())]
             dist.all_gather_object(losses_tr, outputs['loss'])
-            loss_here = np.vstack(losses_tr).mean(0) # EVA added 0 - perhaps in this case not ok? 
+            loss_here = np.vstack(losses_tr).mean()
         else:
-            loss_here = np.mean(outputs['loss'], 0) # EVA added 0
+            loss_here = np.mean(outputs['loss'])
 
         self.logger.log('train_losses', loss_here, self.current_epoch)
 
@@ -1048,25 +1032,23 @@ class nnUNetTrainer(object):
         else:
             target = target.to(self.device, non_blocking=True)
 
-        # Autocast is a little bitch.
+        # Autocast can be annoying
         # If the device_type is 'cpu' then it's slow as heck and needs to be disabled.
         # If the device_type is 'mps' then it will complain that mps is not implemented, even if enabled=False is set. Whyyyyyyy. (this is why we don't make use of enabled=False)
         # So autocast will only be active if we have a cuda device.
         with autocast(self.device.type, enabled=True) if self.device.type == 'cuda' else dummy_context():
             output = self.network(data)
             del data
-            # EVA #
-            losstensor = self.loss(output, target)
-            #######
+            l = self.loss(output, target)
 
-         # we only need the output with the highest output resolution (if DS enabled)
+        # we only need the output with the highest output resolution (if DS enabled)
         if self.enable_deep_supervision:
             output = output[0]
             target = target[0]
 
         # the following is needed for online evaluation. Fake dice (green line)
         axes = [0] + list(range(2, output.ndim))
-        
+
         if self.label_manager.has_regions:
             predicted_segmentation_onehot = (torch.sigmoid(output) > 0.5).long()
         else:
@@ -1105,7 +1087,7 @@ class nnUNetTrainer(object):
             fp_hard = fp_hard[1:]
             fn_hard = fn_hard[1:]
 
-        return {'loss': losstensor.detach().cpu().numpy(), 'tp_hard': tp_hard, 'fp_hard': fp_hard, 'fn_hard': fn_hard} # EVA
+        return {'loss': l.detach().cpu().numpy(), 'tp_hard': tp_hard, 'fp_hard': fp_hard, 'fn_hard': fn_hard}
 
     def on_validation_epoch_end(self, val_outputs: List[dict]):
         outputs_collated = collate_outputs(val_outputs)
@@ -1130,12 +1112,11 @@ class nnUNetTrainer(object):
 
             losses_val = [None for _ in range(world_size)]
             dist.all_gather_object(losses_val, outputs_collated['loss'])
-            loss_here = np.vstack(losses_val).mean(0) # EVA added 0
+            loss_here = np.vstack(losses_val).mean()
         else:
-            loss_here = np.mean(outputs_collated['loss'], 0) # EVA added 0
+            loss_here = np.mean(outputs_collated['loss'])
 
-        global_dc_per_class = [i for i in [2 * i / (2 * i + j + k) for i, j, k in
-                                           zip(tp, fp, fn)]]
+        global_dc_per_class = [i for i in [2 * i / (2 * i + j + k) for i, j, k in zip(tp, fp, fn)]]
         mean_fg_dice = np.nanmean(global_dc_per_class)
         self.logger.log('mean_fg_dice', mean_fg_dice, self.current_epoch)
         self.logger.log('dice_per_class_or_region', global_dc_per_class, self.current_epoch)
@@ -1147,7 +1128,6 @@ class nnUNetTrainer(object):
     def on_epoch_end(self):
         self.logger.log('epoch_end_timestamps', time(), self.current_epoch)
 
-        # todo find a solution for this stupid shit
         self.print_to_log_file('train_loss', np.round(self.logger.my_fantastic_logging['train_losses'][-1], decimals=4))
         self.print_to_log_file('val_loss', np.round(self.logger.my_fantastic_logging['val_losses'][-1], decimals=4))
         self.print_to_log_file('Pseudo dice', [np.round(i, decimals=4) for i in
@@ -1356,7 +1336,6 @@ class nnUNetTrainer(object):
                     dist.barrier()
 
             _ = [r.get() for r in results]
-        
 
         if self.is_ddp:
             dist.barrier()

@@ -4,7 +4,6 @@ from batchgenerators.utilities.file_and_folder_operations import join
 matplotlib.use('agg')
 import seaborn as sns
 import matplotlib.pyplot as plt
-import numpy as np
 
 
 class nnUNetLogger(object):
@@ -53,9 +52,6 @@ class nnUNetLogger(object):
             self.log('ema_fg_dice', new_ema_pseudo_dice, epoch)
 
     def plot_progress_png(self, output_folder):
-        blueshades = ["#1E90FF", "#00BFFF", "#87CEEB", "#4169E1", "#4682B4", "#6495ED"]
-        redshades = ["#DC143C", "#B22222", "#FF6347", "#FF4500", "#A52A2A", "#CD5C5C" ]
-        
         # we infer the epoch form our internal logging
         epoch = min([len(i) for i in self.my_fantastic_logging.values()]) - 1  # lists of epoch 0 have len 1
         sns.set(font_scale=2.5)
@@ -64,36 +60,8 @@ class nnUNetLogger(object):
         ax = ax_all[0]
         ax2 = ax.twinx()
         x_values = list(range(epoch + 1))
-        
-        # EVA #
-        trainlosses =  self.my_fantastic_logging['train_losses'][:epoch + 1]
-        if isinstance(trainlosses[0], np.ndarray):
-            L = len(trainlosses[0])
-            #plot a dashed line with smaller width for each loss separately
-            for los in range(L):
-                clr = los%6
-                to_plot = [i[los] for i in trainlosses]
-                #This is new in version 3.8, not available yet (to add alpha like this):
-                #ax.plot(x_values, to_plot, color=(blueshades[clr], 0.9), ls='--', label=f"loss_tr_{los}", linewidth=2)
-                ax.plot(x_values, to_plot, color=blueshades[clr], ls='--', label=f"loss_tr_{los}", linewidth=2)
-            #plot the cumulative loss
-            ax.plot(x_values, [i.sum() for i in trainlosses], color='b', ls='-', label="loss_tr", linewidth=4)
-        else:
-            ax.plot(x_values, trainlosses, color='b', ls='-', label="loss_tr", linewidth=4)
-        
-        vallosses = self.my_fantastic_logging['val_losses'][:epoch + 1]
-        if isinstance(vallosses[0], np.ndarray):
-            L = len(vallosses[0])
-            #plot a dashed line with smaller width for each loss separately
-            for los in range(L):
-                clr = los%6
-                to_plot = [i[los] for i in vallosses]
-                ax.plot(x_values, to_plot, color=redshades[clr], ls='--', label=f"loss_val{los}", linewidth=2)
-            #plot the cumulative loss
-            ax.plot(x_values, [i.sum() for i in vallosses], color='r', ls='-', label="loss_val", linewidth=4)
-        else:
-            ax.plot(x_values, vallosses, color='r', ls='-', label="loss_val", linewidth=4)
-        
+        ax.plot(x_values, self.my_fantastic_logging['train_losses'][:epoch + 1], color='b', ls='-', label="loss_tr", linewidth=4)
+        ax.plot(x_values, self.my_fantastic_logging['val_losses'][:epoch + 1], color='r', ls='-', label="loss_val", linewidth=4)
         ax2.plot(x_values, self.my_fantastic_logging['mean_fg_dice'][:epoch + 1], color='g', ls='dotted', label="pseudo dice",
                  linewidth=3)
         ax2.plot(x_values, self.my_fantastic_logging['ema_fg_dice'][:epoch + 1], color='g', ls='-', label="pseudo dice (mov. avg.)",
