@@ -61,7 +61,7 @@ class nnUNetLogger(object):
                 for index, one_val in enumerate(zip(*self.my_fantastic_logging[key])):
                     df[key+f"_{index}"] = one_val
             else:
-                def[key] = one_val
+                df[key] = val
         pd.DataFrame(df).to_csv(output_csv_name)
         
         

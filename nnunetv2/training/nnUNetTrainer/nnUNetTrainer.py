@@ -148,7 +148,7 @@ class nnUNetTrainer(object):
         self.oversample_foreground_percent = 0.33
         self.num_iterations_per_epoch = 250
         self.num_val_iterations_per_epoch = 50
-        self.num_epochs = 1000
+        self.num_epochs = 400
         self.current_epoch = 0
         self.enable_deep_supervision = True
 
@@ -1157,6 +1157,9 @@ class nnUNetTrainer(object):
                                                self.logger.my_fantastic_logging['dice_per_class_or_region'][-1]])
         self.print_to_log_file(
             f"Epoch time: {np.round(self.logger.my_fantastic_logging['epoch_end_timestamps'][-1] - self.logger.my_fantastic_logging['epoch_start_timestamps'][-1], decimals=2)} s")
+
+        # save the logg in analysis-appropriate format (csv)
+        self.logger.save_to_csv(self.log_file[:-3]+"csv")
 
         # handling periodic checkpointing
         current_epoch = self.current_epoch
