@@ -71,7 +71,10 @@ class nnUNetTrainerClDSC_7_3(nnUNetTrainer):
         self.weight_dice = 0.3
         self.iter_ = 7 #set this to expected max vessel radius!
         self.enable_deep_supervision = True 
-        self.num_epochs = 300
+        self.num_epochs = 1200
+
+       # print("batch size:", self.batch_size)
+       # self.batch_size=3
         
     def _build_loss(self):
         loss = SoftClDiceLoss({'batch_dice': self.configuration_manager.batch_dice,
